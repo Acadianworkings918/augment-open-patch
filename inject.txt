@@ -1,0 +1,33 @@
+const vscode = require("vscode");
+const result = await vscode.window.showQuickPick(
+  [
+    {
+      label: "AugmentGateway 登录",
+      id: "gateway",
+      description: "AugmentGateway一键登录",
+    },
+  ],
+  {
+    canPickMany: false,
+    ignoreFocusOut: true,
+    matchOnDescription: true,
+    matchOnDetail: true,
+    placeHolder: "选择登录类型！",
+  }
+);
+
+if (result?.description) {
+  vscode.window.showInformationMessage("选择了" + result.description);
+}
+
+if (result?.id === "gateway") {
+  let t = new vscode.CancellationTokenSource();
+  const originUrl = this._config.config.oauth.url;
+  this._config.config.oauth.url = "https://your-gateway-domain.com/proxy";
+  try {
+    const loginResult = await this.login(t.token);
+    return loginResult;
+  } finally {
+    this._config.config.oauth.url = originUrl;
+  }
+}

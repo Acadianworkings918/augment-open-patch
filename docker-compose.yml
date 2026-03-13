@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  augment-patch:
+    build: .
+    container_name: augment-patch
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
+      - NODE_ENV=production
+    env_file:
+      - .env
+    volumes:
+      - ./augment-plugins:/app/augment-plugins
+      - ./inject.txt:/app/inject.txt:ro
+    networks:
+      - augment-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  augment-network:
+    driver: bridge

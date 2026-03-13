@@ -1,0 +1,39 @@
+{
+  "name": "augment-patch",
+  "version": "1.0.0",
+  "description": "VSCode Augment插件自动patch工具",
+  "main": "index.js",
+  "scripts": {
+    "start": "tsx scheduler.ts",
+    "dev": "tsx --watch scheduler.ts",
+    "build": "tsc",
+    "patch-once": "tsx augmentExt.ts",
+    "patch-version": "tsx patch-once.ts",
+    "patch-latest": "tsx patch-once.ts --latest"
+  },
+  "keywords": [
+    "vscode",
+    "augment",
+    "patch",
+    "automation"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "adm-zip": "^0.5.10",
+    "axios": "^1.11.0",
+    "dotenv": "^16.3.1",
+    "node-cron": "^3.0.3",
+    "node-telegram-bot-api": "^0.64.0",
+    "tsx": "^4.0.0",
+    "uglify-js": "^3.17.4"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.0",
+    "@types/node": "^20.8.0",
+    "@types/node-cron": "^3.0.8",
+    "@types/node-telegram-bot-api": "^0.64.0",
+    "@types/uglify-js": "^3.17.1",
+    "typescript": "^5.2.2"
+  }
+}
