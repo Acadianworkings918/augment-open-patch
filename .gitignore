@@ -155,3 +155,4 @@ tests/
 __tests__/
 *.test.*
 *.spec.*
+.ace-tool/

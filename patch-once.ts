@@ -15,30 +15,27 @@ interface PatchOnceConfig {
 
 class PatchOnceProcessor {
   private config: PatchOnceConfig;
-  private telegramPusher: TelegramPusher;
+  private telegramPusher: TelegramPusher | null = null;
 
   constructor() {
     this.config = this.loadConfig();
-    
-    const telegramConfig: TelegramConfig = {
-      botToken: this.config.telegramBotToken,
-      chatId: this.config.telegramChatId
-    };
-    this.telegramPusher = new TelegramPusher(telegramConfig);
+
+    const { telegramBotToken, telegramChatId } = this.config;
+    if (telegramBotToken && telegramChatId && telegramBotToken !== 'your_bot_token_here' && telegramChatId !== 'your_chat_id_here') {
+      const telegramConfig: TelegramConfig = {
+        botToken: telegramBotToken,
+        chatId: telegramChatId
+      };
+      this.telegramPusher = new TelegramPusher(telegramConfig);
+    } else {
+      console.log('ℹ️ 未配置 Telegram，将跳过推送功能');
+    }
   }
 
   private loadConfig(): PatchOnceConfig {
-    const requiredEnvVars = ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'];
-    
-    for (const envVar of requiredEnvVars) {
-      if (!process.env[envVar]) {
-        throw new Error(`缺少必需的环境变量: ${envVar}`);
-      }
-    }
-
     return {
-      telegramBotToken: process.env.TELEGRAM_BOT_TOKEN!,
-      telegramChatId: process.env.TELEGRAM_CHAT_ID!,
+      telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
+      telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
       publisher: process.env.PUBLISHER || "augment",
       extension: process.env.EXTENSION || "vscode-augment",
       workDir: process.env.WORK_DIR || "./augment-plugins"
@@ -66,30 +63,37 @@ class PatchOnceProcessor {
 
       console.log(`✅ Patch完成: ${patchedFilePath}`);
 
-      // 推送文件到Telegram
-      const pushMessage = {
-        version: version,
-        filePath: patchedFilePath,
-        pushTime: new Date().toLocaleString('zh-CN'),
-        changelog: "手动指定版本处理"
-      };
+      // 推送文件到Telegram（可选）
+      if (this.telegramPusher) {
+        const pushMessage = {
+          version: version,
+          filePath: patchedFilePath,
+          pushTime: new Date().toLocaleString('zh-CN'),
+          changelog: "手动指定版本处理"
+        };
 
-      console.log(`📤 正在推送到Telegram...`);
-      const pushSuccess = await this.telegramPusher.pushFile(pushMessage);
-      
-      if (pushSuccess) {
-        console.log(`✅ 版本 ${version} 处理完成并推送成功`);
-        return true;
+        console.log(`📤 正在推送到Telegram...`);
+        const pushSuccess = await this.telegramPusher.pushFile(pushMessage);
+
+        if (pushSuccess) {
+          console.log(`✅ 版本 ${version} 处理完成并推送成功`);
+        } else {
+          console.warn(`⚠️ 推送到Telegram失败，但Patch已完成: ${patchedFilePath}`);
+        }
       } else {
-        throw new Error("推送到Telegram失败");
+        console.log(`✅ 版本 ${version} 处理完成 (未配置Telegram，跳过推送)`);
       }
+
+      return true;
 
     } catch (error) {
       console.error(`❌ 处理版本 ${version} 时出错:`, error);
-      await this.telegramPusher.sendErrorNotification(
-        error instanceof Error ? error.message : String(error),
-        version
-      );
+      if (this.telegramPusher) {
+        await this.telegramPusher.sendErrorNotification(
+          error instanceof Error ? error.message : String(error),
+          version
+        );
+      }
       return false;
     }
   }
@@ -127,6 +131,9 @@ class PatchOnceProcessor {
    * 测试Telegram连接
    */
   async testConnection(): Promise<boolean> {
+    if (!this.telegramPusher) {
+      return true; // 未配置时视为成功
+    }
     return await this.telegramPusher.testConnection();
   }
 }
@@ -149,10 +156,10 @@ async function main() {
   try {
     const processor = new PatchOnceProcessor();
 
-    // 测试Telegram连接
+    // 测试Telegram连接（可选）
     const telegramOk = await processor.testConnection();
     if (!telegramOk) {
-      throw new Error("Telegram机器人连接失败，请检查配置");
+      console.warn('⚠️ Telegram机器人连接失败，将跳过推送功能');
     }
 
     let success = false;

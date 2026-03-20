@@ -19,38 +19,40 @@ interface Config {
   logLevel: string;
 }
 
+// 判断 Telegram 是否已配置有效 token
+const isTelegramConfigured = (token: string, chatId: string): boolean => {
+  return !!(token && chatId && token !== 'your_bot_token_here' && chatId !== 'your_chat_id_here');
+};
+
 class AugmentScheduler {
   private config: Config;
   private versionTracker: VersionTracker;
-  private telegramPusher: TelegramPusher;
+  private telegramPusher: TelegramPusher | null = null;
   private isProcessing: boolean = false;
 
   constructor() {
     this.config = this.loadConfig();
     this.versionTracker = new VersionTracker(this.config.workDir);
-    
-    const telegramConfig: TelegramConfig = {
-      botToken: this.config.telegramBotToken,
-      chatId: this.config.telegramChatId
-    };
-    this.telegramPusher = new TelegramPusher(telegramConfig);
+
+    if (isTelegramConfigured(this.config.telegramBotToken, this.config.telegramChatId)) {
+      const telegramConfig: TelegramConfig = {
+        botToken: this.config.telegramBotToken,
+        chatId: this.config.telegramChatId
+      };
+      this.telegramPusher = new TelegramPusher(telegramConfig);
+    } else {
+      console.log('ℹ️ 未配置 Telegram，将跳过推送功能');
+    }
   }
 
   /**
    * 加载配置
    */
   private loadConfig(): Config {
-    const requiredEnvVars = ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'];
-    
-    for (const envVar of requiredEnvVars) {
-      if (!process.env[envVar]) {
-        throw new Error(`缺少必需的环境变量: ${envVar}`);
-      }
-    }
 
     return {
-      telegramBotToken: process.env.TELEGRAM_BOT_TOKEN!,
-      telegramChatId: process.env.TELEGRAM_CHAT_ID!,
+      telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
+      telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
       checkIntervalMinutes: parseInt(process.env.CHECK_INTERVAL_MINUTES || "60"),
       publisher: process.env.PUBLISHER || "augment",
       extension: process.env.EXTENSION || "vscode-augment",
@@ -67,10 +69,13 @@ class AugmentScheduler {
   async start() {
     console.log("🚀 Augment Patch 调度器启动中...");
 
-    // 测试Telegram连接
-    const telegramOk = await this.telegramPusher.testConnection();
-    if (!telegramOk) {
-      throw new Error("Telegram机器人连接失败，请检查配置");
+    // 测试Telegram连接（可选）
+    if (this.telegramPusher) {
+      const telegramOk = await this.telegramPusher.testConnection();
+      if (!telegramOk) {
+        console.warn('⚠️ Telegram机器人连接失败，将跳过推送功能');
+        this.telegramPusher = null;
+      }
     }
 
     // 立即执行一次检查
@@ -133,9 +138,11 @@ class AugmentScheduler {
 
     } catch (error) {
       console.error("❌ 检查更新时出错:", error);
-      await this.telegramPusher.sendErrorNotification(
-        error instanceof Error ? error.message : String(error)
-      );
+      if (this.telegramPusher) {
+        await this.telegramPusher.sendErrorNotification(
+          error instanceof Error ? error.message : String(error)
+        );
+      }
     } finally {
       this.isProcessing = false;
     }
@@ -166,12 +173,15 @@ class AugmentScheduler {
         changelog: "啥也没干"
       };
 
-      const pushSuccess = await this.telegramPusher.pushFile(pushMessage);
-      
-      if (pushSuccess) {
-        console.log(`✅ 版本 ${versionInfo.version} 处理完成并推送成功`);
+      if (this.telegramPusher) {
+        const pushSuccess = await this.telegramPusher.pushFile(pushMessage);
+        if (pushSuccess) {
+          console.log(`✅ 版本 ${versionInfo.version} 处理完成并推送成功`);
+        } else {
+          console.warn(`⚠️ 推送到Telegram失败，但Patch已完成: ${patchedFilePath}`);
+        }
       } else {
-        throw new Error("推送到Telegram失败");
+        console.log(`✅ 版本 ${versionInfo.version} 处理完成 (未配置Telegram，跳过推送)`);
       }
 
       // 清理旧版本
@@ -181,10 +191,12 @@ class AugmentScheduler {
 
     } catch (error) {
       console.error(`❌ 处理版本 ${versionInfo.version} 时出错:`, error);
-      await this.telegramPusher.sendErrorNotification(
-        error instanceof Error ? error.message : String(error),
-        versionInfo.version
-      );
+      if (this.telegramPusher) {
+        await this.telegramPusher.sendErrorNotification(
+          error instanceof Error ? error.message : String(error),
+          versionInfo.version
+        );
+      }
       throw error;
     }
   }

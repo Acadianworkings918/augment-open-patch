@@ -3,6 +3,7 @@ import AdmZip from "adm-zip";
 import fs from "fs";
 import path from "path";
 import { pipeline } from "stream/promises";
+import { Transform } from "stream";
 import UglifyJS from "uglify-js";
 
 // 下载链接示例: https://marketplace.visualstudio.com/_apis/public/gallery/publishers/augment/vsextensions/vscode-augment/0.412.0/vspackage
@@ -34,7 +35,7 @@ const patchJs = (fileContent: string) => {
   } else {
     console.log("未找到 OAuth 错误抛出，跳过替换");
   }
-  
+
   const index = modifiedContent.indexOf(loginPrefix);
   if (index === -1) {
     throw new Error("注入失败，没有找到登录函数！");
@@ -114,6 +115,109 @@ export async function getExtensionVersions(
   }
 }
 
+// 带重试的下载函数
+const downloadWithRetry = async (url: string, destPath: string, maxRetries: number = 3): Promise<void> => {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`下载尝试 ${attempt}/${maxRetries}...`);
+
+      // 清理可能存在的不完整文件
+      if (fs.existsSync(destPath)) {
+        fs.unlinkSync(destPath);
+      }
+
+      const response = await axios.get(url, {
+        responseType: "stream",
+        timeout: 300000, // 5分钟总超时
+        headers: {
+          'Connection': 'keep-alive',
+        },
+      });
+
+      // 获取文件总大小
+      const totalSize = parseInt(response.headers['content-length'] || '0', 10);
+      let downloadedSize = 0;
+      let lastLogTime = Date.now();
+      const startTime = Date.now();
+
+      if (totalSize > 0) {
+        console.log(`📥 文件大小: ${(totalSize / 1024 / 1024).toFixed(2)} MB`);
+      }
+
+      // 使用 Transform stream 追踪下载进度
+      const progressTracker = new Transform({
+        transform(chunk: Buffer, _encoding, callback) {
+          downloadedSize += chunk.length;
+          const now = Date.now();
+
+          // 每秒最多打印一次进度，避免刷屏
+          if (now - lastLogTime >= 1000) {
+            lastLogTime = now;
+            const elapsed = (now - startTime) / 1000;
+            const speed = downloadedSize / elapsed;
+            const speedStr = speed >= 1024 * 1024
+              ? `${(speed / 1024 / 1024).toFixed(2)} MB/s`
+              : `${(speed / 1024).toFixed(1)} KB/s`;
+
+            if (totalSize > 0) {
+              const percent = ((downloadedSize / totalSize) * 100).toFixed(1);
+              const remaining = ((totalSize - downloadedSize) / speed);
+              const remainStr = remaining >= 60
+                ? `${(remaining / 60).toFixed(1)}min`
+                : `${remaining.toFixed(0)}s`;
+              process.stdout.write(`\r⏬ 下载进度: ${percent}% (${(downloadedSize / 1024 / 1024).toFixed(2)}/${(totalSize / 1024 / 1024).toFixed(2)} MB) | ${speedStr} | 剩余 ${remainStr}  `);
+            } else {
+              process.stdout.write(`\r⏬ 已下载: ${(downloadedSize / 1024 / 1024).toFixed(2)} MB | ${speedStr}  `);
+            }
+          }
+
+          callback(null, chunk);
+        }
+      });
+
+      await pipeline(response.data, progressTracker, fs.createWriteStream(destPath));
+
+      // 换行，结束进度行
+      if (downloadedSize > 0) {
+        process.stdout.write('\n');
+      }
+
+      // 验证文件已下载且非空
+      const stats = fs.statSync(destPath);
+      if (stats.size === 0) {
+        throw new Error("下载的文件为空");
+      }
+
+      const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.log(`✅ 下载成功 (${(stats.size / 1024 / 1024).toFixed(2)} MB, 耗时 ${totalTime}s)`);
+      return;
+    } catch (error: any) {
+      const isRetryable = error.code === 'ECONNRESET'
+        || error.code === 'ETIMEDOUT'
+        || error.code === 'ECONNABORTED'
+        || error.code === 'EPIPE'
+        || error.code === 'EAI_AGAIN'
+        || error.message === '下载的文件为空';
+
+      console.error(`下载失败 (尝试 ${attempt}/${maxRetries}): ${error.code || error.message}`);
+
+      // 清理不完整的文件
+      if (fs.existsSync(destPath)) {
+        fs.unlinkSync(destPath);
+      }
+
+      if (attempt === maxRetries || !isRetryable) {
+        throw new Error(`下载失败，已重试 ${maxRetries} 次: ${error.message}`);
+      }
+
+      // 等待后重试，递增延迟
+      const delay = attempt * 5000;
+      console.log(`等待 ${delay / 1000} 秒后重试...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+};
+
 // 检查是否已存在修补过的文件
 const checkExistingPatchedFile = (version: string): string | null => {
   const tempDir = path.resolve(process.cwd(), "augment-plugins");
@@ -123,7 +227,7 @@ const checkExistingPatchedFile = (version: string): string | null => {
 
   const patchedFilePath = path.join(
     tempDir,
-    `augment.vscode-augment-${version}-patched.vsix`
+    `augment.vscode-augment-${version}-gateway-patched.vsix`
   );
   if (fs.existsSync(patchedFilePath)) {
     return patchedFilePath;
@@ -157,10 +261,10 @@ const cleanOldVersions = (currentVersion: string) => {
     // 按版本号排序（提取版本号并按版本号排序）
     const sortedVersions = otherVersions.sort((a, b) => {
       const versionA =
-        a.match(/augment\.vscode-augment-(\d+\.\d+\.\d+)-patched\.vsix/)?.[1] ||
+        a.match(/augment\.vscode-augment-(\d+\.\d+\.\d+)-.*patched\.vsix/)?.[1] ||
         "";
       const versionB =
-        b.match(/augment\.vscode-augment-(\d+\.\d+\.\d+)-patched\.vsix/)?.[1] ||
+        b.match(/augment\.vscode-augment-(\d+\.\d+\.\d+)-.*patched\.vsix/)?.[1] ||
         "";
 
       // 按版本号分量比较
@@ -218,9 +322,8 @@ export const patchExtension = async (version: string, cleanUp: boolean = true) =
     const url = `https://marketplace.visualstudio.com/_apis/public/gallery/publishers/augment/vsextensions/vscode-augment/${version}/vspackage`;
     vsixPath = path.join(tempDir, `augment.vscode-augment-${version}.vsix`);
 
-    // 使用流式下载以处理大文件
-    const response = await axios.get(url, { responseType: "stream" });
-    await pipeline(response.data, fs.createWriteStream(vsixPath));
+    // 使用带重试的下载函数
+    await downloadWithRetry(url, vsixPath);
     console.log(`扩展下载完成: ${vsixPath}`);
 
     // 解压扩展
