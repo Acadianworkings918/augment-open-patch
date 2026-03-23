@@ -2,7 +2,7 @@
 
 English | [中文](./README.md)
 
-An automation tool for monitoring Augment VSCode plugin updates, automatically downloading, patching, and pushing to a Telegram bot.
+An automation tool for monitoring Augment VSCode plugin updates, automatically downloading, patching, and pushing to a Telegram bot. Please use this plugin with: [Augment-Open-Gateway](https://github.com/linqiu919/augment-open-gateway) service!
 
 ## Features
 

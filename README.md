@@ -2,7 +2,7 @@
 
 [English](./README_EN.md) | 中文
 
-这是一个自动化工具，用于监控 Augment VSCode 插件的更新，自动下载、patch并推送到Telegram机器人。
+这是一个自动化工具，用于监控 Augment VSCode 插件的更新，自动下载、patch并推送到Telegram机器人。插件请搭配：[Augment-Open-Gateway](https://github.com/linqiu919/augment-open-gateway) 服务使用！
 
 ## 功能特性
 
